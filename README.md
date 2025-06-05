@@ -7,6 +7,7 @@ Prerequisite: Magick++ must be installed.
 2) To compile, run the commands:
 
 g++ -std=c++17 -O2 nbody_sequential.cpp $(Magick++-config --cxxflags --libs) -o nbody_sequential.exe
+
 g++ -std=c++17 -O2 nbody_parallel.cpp   $(Magick++-config --cxxflags --libs) -o nbody_parallel.exe
 
 
