@@ -35,6 +35,6 @@ large_random_simulation
 
 After running, the program writes an animated GIF named:
 
-anime_<sequential/parallel>_YYYYMMDD_HHMMSS.gif
+animation_<sequential/parallel>_YYYYMMDD_HHMMSS.gif
 
 
