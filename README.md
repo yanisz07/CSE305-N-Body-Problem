@@ -10,6 +10,9 @@ g++ -std=c++17 -O2 nbody_sequential.cpp $(Magick++-config --cxxflags --libs) -o 
 
 g++ -std=c++17 -O2 nbody_parallel.cpp   $(Magick++-config --cxxflags --libs) -o nbody_parallel.exe
 
+g++ -std=c++17 -O2 Barnes_Hut_Sequential.cpp $(Magick++-config --cxxflags --libs) -o barnes_hut_sequential
+
+
 
 3) To run the sequential simulation:
 
