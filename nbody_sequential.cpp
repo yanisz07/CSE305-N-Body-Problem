@@ -1,8 +1,4 @@
 // nbody_sequential.cpp
-
-#include "body.hpp"
-#include "config.hpp"
-
 #include <Magick++.h>
 #include <iostream>
 #include <vector>
@@ -12,145 +8,160 @@
 #include <chrono>
 #include <ctime>
 #include <random>
+#include "config.hpp"
+#include "body.hpp"
 
 using namespace Magick;
 using std::vector;
 using std::string;
 
-static constexpr double G = 6.67430e-11;
+static constexpr double G_CONST = 6.67430e-11;
 
 int main(int argc, char** argv) {
     if (argc != 2) {
-        std::cerr << "Usage: " << argv[0]
-                  << " <config_name>\n"
-                  << "Valid configs: two_body_test, earth_moon, jupiter_moons,\n"
-                  << "               solar_system, milky_way, large_random_simulation\n";
+        std::cerr << "Usage: " << argv[0] << " <scenario>\n";
         return 1;
     }
     string configName = argv[1];
     Config cfg(configName);
 
+    // Feedback
+    std::cout << "Scenario:       " << configName << "\n"
+              << "Steps:          " << cfg.steps
+              << ", Timestep: "  << cfg.timestep << " s\n"
+              << "DistanceScale:  " << cfg.distanceScale << "\n\n";
+
     InitializeMagick(*argv);
 
+    // 1) Define bodies
     vector<Body> bodies;
-    if (configName == "earth_moon") {
+    if (configName == "benchmark_fixed") {
+        // 500 bodies on a 20×25 grid in ±1e9 m
+        const int NX = 20, NY = 25;
+        const double span = 2e9;
+        const double dx = span/(NX-1), dy = span/(NY-1);
+        bodies.reserve(NX*NY);
+        for (int ix = 0; ix < NX; ++ix) {
+            for (int iy = 0; iy < NY; ++iy) {
+                bodies.emplace_back(
+                  1e25,
+                  Vec{-1e9 + ix*dx, -1e9 + iy*dy},
+                  Vec{0,0}
+                );
+            }
+        }
+    }
+    else if (configName == "earth_moon") {
         bodies = {
-            {5.972e24,      { 0.0, 0.0 }, { 0.0, 0.0 }},
-            {7.34767309e22, {3.84e8, 0.0 }, { 0.0, 1022.0 }}
+            {5.972e24, {0,0},     {0,0}},
+            {7.34767309e22, {3.84e8,0}, {0,1022}}
         };
     }
     else if (configName == "jupiter_moons") {
         bodies = {
-            {1.898e27, {    0.0,   0.0 }, {   0.0,    0.0   }},
-            {8.93e22,  {4.22e8,   0.0 }, {   0.0, 17320.0   }},
-            {4.8e22,   {6.71e8,   0.0 }, {   0.0, 13740.0   }},
-            {1.48e23,  {1.07e9,   0.0 }, {   0.0, 10870.0   }},
-            {1.08e23,  {1.88e9,   0.0 }, {   0.0,  8200.0   }}
+            {1.898e27, {0,0},       {0,0}},
+            {8.93e22, {4.22e8,0},    {0,17320}},
+            {4.8e22,  {6.71e8,0},    {0,13740}},
+            {1.48e23, {1.07e9,0},    {0,10870}},
+            {1.08e23, {1.88e9,0},    {0,8200}}
         };
     }
     else if (configName == "solar_system") {
         bodies = {
-            {1.989e30, {      0.0,      0.0 }, {   0.0,     0.0   }},
-            {3.285e23, { 5.79e10,      0.0 }, {   0.0,  47400.0   }},
-            {4.867e24, {1.082e11,      0.0 }, {   0.0,  35020.0   }},
-            {5.972e24, {1.496e11,      0.0 }, {   0.0,  29780.0   }},
-            {6.39e23,  {2.279e11,      0.0 }, {   0.0,  24130.0   }},
-            {1.898e27, {7.785e11,      0.0 }, {   0.0,  13070.0   }}
+            {1.989e30, {0,0},         {0,0}},
+            {3.285e23, {5.79e10,0},    {0,47400}},
+            {4.867e24, {1.082e11,0},   {0,35020}},
+            {5.972e24, {1.496e11,0},   {0,29780}},
+            {6.39e23,  {2.279e11,0},   {0,24130}},
+            {1.898e27, {7.785e11,0},   {0,13070}}
         };
     }
     else if (configName == "milky_way") {
-        std::mt19937_64 rng(std::random_device{}());
-        std::uniform_real_distribution<double> rDist(0, 5e20);
-        std::uniform_real_distribution<double> aDist(0, 2 * std::acos(-1));
-        std::uniform_real_distribution<double> mDist(1e30, 1e32);
-        const int Nstars = 100;
-        for (int i = 0; i < Nstars; ++i) {
-            double r = rDist(rng);
-            double th = aDist(rng);
-            double x = r * std::cos(th), y = r * std::sin(th);
-            double m = mDist(rng);
-            bodies.emplace_back(m, Vec{x, y}, Vec{0.0, 0.0});
+        std::mt19937_64 rng(123);
+        std::uniform_real_distribution<double> rD(0,5e20),
+                                              aD(0,2*M_PI),
+                                              mD(1e30,1e32);
+        for (int i = 0; i < 100; ++i) {
+            double r = rD(rng), th = aD(rng);
+            bodies.emplace_back(
+              mD(rng),
+              Vec{r*std::cos(th), r*std::sin(th)},
+              Vec{0,0}
+            );
         }
     }
     else if (configName == "large_random_simulation") {
-        std::mt19937_64 rng(std::random_device{}());
-        std::uniform_real_distribution<double> posD(-1e10, 1e10);
-        std::uniform_real_distribution<double> velD(-1e4, 1e4);
-        std::uniform_real_distribution<double> massD(1e20, 1e25);
-        const int Nrand = 50;
-        for (int i = 0; i < Nrand; ++i) {
-            double x = posD(rng), y = posD(rng);
-            double vx = velD(rng), vy = velD(rng);
-            double m = massD(rng);
-            bodies.emplace_back(m, Vec{x, y}, Vec{vx, vy});
+        std::mt19937_64 rng(456);
+        std::uniform_real_distribution<double> pD(-1e10,1e10),
+                                              vD(-1e4,1e4),
+                                              mD(1e20,1e25);
+        for (int i = 0; i < 50; ++i) {
+            bodies.emplace_back(
+              mD(rng),
+              Vec{pD(rng),pD(rng)},
+              Vec{vD(rng),vD(rng)}
+            );
         }
     }
     else if (configName == "two_body_test") {
         bodies = {
-            {1e7, {-1.0, 0.0}, {0.0, 0.0}},
-            {1e7, { 1.0, 0.0}, {0.0, 0.0}}
+            {1e7, {-1,0}, {0,0}},
+            {1e7, { 1,0}, {0,0}}
         };
     }
     else {
-        std::cerr << "Unexpected config: " << configName << "\n";
+        std::cerr << "Unknown scenario: " << configName << "\n";
         return 1;
     }
 
     int N = bodies.size();
 
+    // 2) Record initial positions
     vector<vector<Vec>> history;
     history.reserve(cfg.steps + 1);
     {
-        vector<Vec> frame;
-        frame.reserve(N);
-        for (auto &b : bodies) {
-            frame.push_back(b.pos);
-        }
-        history.push_back(frame);
+        vector<Vec> init; init.reserve(N);
+        for (auto &b : bodies) init.push_back(b.pos);
+        history.push_back(init);
     }
 
-    std::cout << "Starting sequential integration (“" << configName
-              << "”) with " << cfg.steps << " steps.\n";
-
+    // 3) Integrate (Euler)
     for (int step = 0; step < cfg.steps; ++step) {
-        for (auto &b : bodies) {
-            b.force.x = 0.0;
-            b.force.y = 0.0;
-        }
+        // zero forces
+        for (auto &b : bodies) b.force = {0,0};
 
+        // pairwise gravity
         for (int i = 0; i < N; ++i) {
             for (int j = i + 1; j < N; ++j) {
                 double dx = bodies[j].pos.x - bodies[i].pos.x;
                 double dy = bodies[j].pos.y - bodies[i].pos.y;
                 double d2 = dx*dx + dy*dy + 1e-12;
-                double inv = 1.0 / std::sqrt(d2);
-                double F   = G * bodies[i].m * bodies[j].m * inv * inv;
-                double fx  = F * dx * inv;
-                double fy  = F * dy * inv;
-                bodies[i].force.x += fx;
-                bodies[i].force.y += fy;
-                bodies[j].force.x -= fx;
-                bodies[j].force.y -= fy;
+                double inv = 1.0/std::sqrt(d2);
+                double F = G_CONST * bodies[i].m * bodies[j].m * inv*inv;
+                double fx = F * dx * inv;
+                double fy = F * dy * inv;
+                bodies[i].force.x += fx; bodies[i].force.y += fy;
+                bodies[j].force.x -= fx; bodies[j].force.y -= fy;
             }
         }
 
+        // update
         for (auto &b : bodies) {
-            b.vel.x += (b.force.x / b.m) * cfg.timestep;
-            b.vel.y += (b.force.y / b.m) * cfg.timestep;
+            b.vel.x += (b.force.x/b.m) * cfg.timestep;
+            b.vel.y += (b.force.y/b.m) * cfg.timestep;
             b.pos.x += b.vel.x * cfg.timestep;
             b.pos.y += b.vel.y * cfg.timestep;
         }
 
-        vector<Vec> frame;
-        frame.reserve(N);
-        for (auto &b : bodies) {
-            frame.push_back(b.pos);
-        }
+        // record
+        vector<Vec> frame; frame.reserve(N);
+        for (auto &b : bodies) frame.push_back(b.pos);
         history.push_back(frame);
     }
 
-    std::cout << "Finished integration, building " << history.size() << " frames.\n";
+    std::cout << "Finished integration, building frames\n";
 
+    // 4) Build frames
     vector<Image> frames;
     frames.reserve(history.size());
     vector<string> colors = {"red","blue","green","orange","purple"};
@@ -165,7 +176,6 @@ int main(int argc, char** argv) {
             double ny = history[t][i].y * cfg.distanceScale + 0.5;
             int px = int(nx * (cfg.width - 1));
             int py = cfg.height - 1 - int(ny * (cfg.height - 1));
-
             img.fillColor(colors[i % colors.size()]);
             img.draw(DrawableCircle(px, py, px + 5, py));
         }
@@ -173,25 +183,26 @@ int main(int argc, char** argv) {
         img.fillColor("black");
         std::ostringstream ss;
         ss << "t=" << std::fixed << std::setprecision(1)
-           << (t * cfg.timestep) << "s";
+           << t * cfg.timestep << "s";
         img.annotate(ss.str(), NorthWestGravity);
 
         img.animationDelay(10);
         img.animationIterations(0);
-
-        frames.push_back(img);
+        frames.push_back(std::move(img));
     }
 
-    std::cout << "Building GIF, writing to disk…\n";
+    std::cout << "Finished building frames, writing GIF…\n";
 
+    // 5) Write GIF
     auto now = std::chrono::system_clock::now();
     std::time_t ti = std::chrono::system_clock::to_time_t(now);
-    std::tm* tm    = std::localtime(&ti);
+    std::tm* tm = std::localtime(&ti);
     std::ostringstream fn;
-    fn << "animation_sequential_" << configName << "_"
-       << std::put_time(tm, "%Y%m%d_%H%M%S") << ".gif";
+    fn << "gif_seq_" << configName << "_"
+       << std::put_time(tm, "%Y%m%d_%H%M%S")
+       << ".gif";
 
     writeImages(frames.begin(), frames.end(), fn.str());
-    std::cout << "Done writing GIF (" << fn.str() << "). Exiting.\n";
+    std::cout << "✔ Wrote " << fn.str() << "\n";
     return 0;
 }
