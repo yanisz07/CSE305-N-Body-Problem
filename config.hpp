@@ -17,6 +17,11 @@ struct Config {
             distanceScale = 0.5 / 3.84e8;
             timestep      = 3600;  steps = 500;
         }
+        else if (name == "benchmark_fixed") {
+            distanceScale = 0.5  / 1e9;
+            timestep      = 3600;
+            steps         = 50;
+        }
         else if (name == "jupiter_moons") {
             distanceScale = 0.5 / 4.22e8;
             timestep      = 3600;  steps = 200;
