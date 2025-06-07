@@ -48,7 +48,7 @@ struct Config {
         else if (name == "benchmark_fixed") {
             distanceScale = 0.5  / 1e9;
             timestep      = 3600;
-            steps         = 50;
+            steps         = 100;
         }
         else {
             std::cerr << "Invalid config: " << name << "\n";
