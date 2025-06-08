@@ -1,2 +1,0 @@
-scenario,seq_s,par1_s,speedup1,par2_s,speedup2,par4_s,speedup4,par8_s,speedup8
-[BUILD] compiling sequential → barnes_hut_seq, parallel → barnes_hut_par

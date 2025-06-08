@@ -13,7 +13,7 @@ threads=(1 2 4 8)
 NO_GIF_FLAG="-DNO_GIF"
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Build (θ defaults to 0.5 in code)
+# Build (θ defaults to 0.5)
 echo "BUILD: compiling binaries..." >&2
 g++ -std=c++17 -O2 $NO_GIF_FLAG "$SRC_SEQ" -o "$BIN_SEQ" \
     $(Magick++-config --cppflags --cxxflags --ldflags --libs) >&2

@@ -1,2 +1,2 @@
 scenario,seq_s,par1_s,speedup1,par2_s,speedup2,par4_s,speedup4,par8_s,speedup8
-benchmark_fixed,44.6743,41.5717,1.07463,29.2651,1.52654,12.3357,3.62155,6.73807,6.63013
+benchmark_fixed,17.5504,17.926,0.979047,14.0858,1.24596,8.91194,1.96931,6.89606,2.54499

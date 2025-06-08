@@ -2,13 +2,12 @@
 set -euo pipefail
 shopt -s nullglob
 
-# ─── Adjust these to your project ─────────────────────────────────────────────
-SRC_SEQ="Barnes_Hut_Sequential.cpp"       # your sequential source
-SRC_PAR="barnes_hut_parallel.cpp"    # your parallel source
+SRC_SEQ="Barnes_Hut_Sequential.cpp"
+SRC_PAR="barnes_hut_parallel.cpp"    
 BIN_SEQ="barnes_hut_seq"             # sequential binary name
 BIN_PAR="barnes_hut_par"             # parallel binary name
 SCEN="benchmark_fixed"               # config to benchmark
-GIF_DIR="benchmark_gifs/$SCEN"       # where to stash GIFs (if any)
+GIF_DIR="benchmark_gifs/$SCEN"       
 runs=3                               # repetitions per setting
 threads=(1 2 4 8)                    # thread‐counts to sweep over
 # ───────────────────────────────────────────────────────────────────────────────
@@ -22,7 +21,7 @@ for T in "${threads[@]}"; do
 done
 echo
 
-# 1) Build both binaries (θ defaults to 0.5 in your code)
+# 1) Build both binaries (θ defaults to 0.5)
 echo "[BUILD] compiling sequential → $BIN_SEQ, parallel → $BIN_PAR"
 g++ -std=c++17 -O2 "$SRC_SEQ" -o "$BIN_SEQ" \
     $(Magick++-config --cppflags --cxxflags --ldflags --libs)

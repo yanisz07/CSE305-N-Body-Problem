@@ -37,7 +37,7 @@ int main(int argc, char** argv) {
     vector<Body> bodies;
     if (configName == "benchmark_fixed") {
         // 500 bodies on a 20×25 grid in ±1e9 m
-        const int NX = 20, NY = 25;
+        const int NX = 25, NY = 25;
         const double span = 2e9;
         const double dx = span/(NX-1), dy = span/(NY-1);
         bodies.reserve(NX*NY);

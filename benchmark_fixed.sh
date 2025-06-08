@@ -8,7 +8,6 @@ SCEN="benchmark_fixed"
 GIF_DIR="benchmark_gifs/$SCEN"
 threads=(1 2 4 8)
 runs=3
-
 mkdir -p "$GIF_DIR"
 
 # CSV header

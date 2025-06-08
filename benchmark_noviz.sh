@@ -5,7 +5,7 @@ SEQ="./nbody_sequential_noviz.exe"
 PAR="./nbody_parallel_noviz.exe"
 SCEN="benchmark_fixed"
 threads=(1 2 4 8)
-runs=3
+runs=5
 
 # CSV header
 printf "scenario,seq_s"

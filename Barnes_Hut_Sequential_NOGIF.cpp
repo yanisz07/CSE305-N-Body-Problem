@@ -152,11 +152,85 @@ int main(int argc, char** argv) {
     string configName = argv[1];
     Config cfg(configName);
 
-    // Initialize bodies based on config
     vector<Body> bodies;
-    // ... same config blocks as before ...
-    // (omitted for brevity)
-
+    if (configName == "benchmark_fixed") {
+        // 500 bodies on a 20×25 grid in ±1e9 m
+        const int NX = 20, NY = 25;
+        const double span = 2e9;
+        const double dx = span/(NX-1), dy = span/(NY-1);
+        bodies.reserve(NX*NY);
+        for (int ix = 0; ix < NX; ++ix) {
+            for (int iy = 0; iy < NY; ++iy) {
+                bodies.emplace_back(
+                  1e25,
+                  Vec{-1e9 + ix*dx, -1e9 + iy*dy},
+                  Vec{0,0}
+                );
+            }
+        }
+    }
+    else if (configName == "earth_moon") {
+        bodies = {
+            {5.972e24,      { 0.0, 0.0 }, { 0.0, 0.0 }},
+            {7.34767309e22, {3.84e8, 0.0 }, { 0.0, 1022.0 }}
+        };
+    }
+    else if (configName == "jupiter_moons") {
+        bodies = {
+            {1.898e27, {    0.0,   0.0 }, {   0.0,    0.0   }},
+            {8.93e22,  {4.22e8,   0.0 }, {   0.0, 17320.0   }},
+            {4.8e22,   {6.71e8,   0.0 }, {   0.0, 13740.0   }},
+            {1.48e23,  {1.07e9,   0.0 }, {   0.0, 10870.0   }},
+            {1.08e23,  {1.88e9,   0.0 }, {   0.0,  8200.0   }}
+        };
+    }
+    else if (configName == "solar_system") {
+        bodies = {
+            {1.989e30, {      0.0,      0.0 }, {   0.0,     0.0   }},
+            {3.285e23, { 5.79e10,      0.0 }, {   0.0,  47400.0   }},
+            {4.867e24, {1.082e11,      0.0 }, {   0.0,  35020.0   }},
+            {5.972e24, {1.496e11,      0.0 }, {   0.0,  29780.0   }},
+            {6.39e23,  {2.279e11,      0.0 }, {   0.0,  24130.0   }},
+            {1.898e27, {7.785e11,      0.0 }, {   0.0,  13070.0   }}
+        };
+    }
+    else if (configName == "milky_way") {
+        std::mt19937_64 rng(std::random_device{}());
+        std::uniform_real_distribution<double> rDist(0, 5e20);
+        std::uniform_real_distribution<double> aDist(0, 2 * std::acos(-1));
+        std::uniform_real_distribution<double> mDist(1e30, 1e32);
+        const int Nstars = 100;
+        for (int i = 0; i < Nstars; ++i) {
+            double r = rDist(rng);
+            double th = aDist(rng);
+            double x = r * std::cos(th), y = r * std::sin(th);
+            double m = mDist(rng);
+            bodies.emplace_back(m, Vec{x, y}, Vec{0.0, 0.0});
+        }
+    }
+    else if (configName == "large_random_simulation") {
+        std::mt19937_64 rng(std::random_device{}());
+        std::uniform_real_distribution<double> posD(-1e10, 1e10);
+        std::uniform_real_distribution<double> velD(-1e4, 1e4);
+        std::uniform_real_distribution<double> massD(1e20, 1e25);
+        const int Nrand = 50;
+        for (int i = 0; i < Nrand; ++i) {
+            double x = posD(rng), y = posD(rng);
+            double vx = velD(rng), vy = velD(rng);
+            double m = massD(rng);
+            bodies.emplace_back(m, Vec{x, y}, Vec{vx, vy});
+        }
+    }
+    else if (configName == "two_body_test") {
+        bodies = {
+            {1e7, {-1.0, 0.0}, {0.0, 0.0}},
+            {1e7, { 1.0, 0.0}, {0.0, 0.0}}
+        };
+    }
+    else {
+        std::cerr << "Unexpected config: " << configName << "\n";
+        return 1;
+    }
     int N = bodies.size();
 
     std::cout << "Starting Barnes-Hut integration (“" << configName

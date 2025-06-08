@@ -1,4 +1,5 @@
 // nbody_parallel.cpp
+
 #include <Magick++.h>
 #include <iostream>
 #include <vector>
@@ -8,25 +9,50 @@
 #include <condition_variable>
 #include <cmath>
 #include <random>
-#include <algorithm>
-#include <chrono>
-#include <ctime>
 #include <sstream>
 #include <iomanip>
+#include <chrono>
+#include <ctime>
+
 #include "config.hpp"
 #include "body.hpp"
 
-using namespace Magick;
 using std::vector;
 using std::string;
 
+// physical constants
 static constexpr double G_CONST = 6.67430e-11;
 static constexpr double PI      = 3.14159265358979323846;
 
-// Shared I/O queue
+
+class Barrier {
+    std::mutex              mtx;
+    std::condition_variable cv;
+    int                     count, threshold, generation = 0;
+public:
+    explicit Barrier(int n): count(n), threshold(n) {}
+    void wait() {
+        std::unique_lock<std::mutex> lk(mtx);
+        int gen = generation;
+        if (--count == 0) {
+            generation++;
+            count = threshold;
+            cv.notify_all();
+        } else {
+            cv.wait(lk, [&]{ return gen != generation; });
+        }
+    }
+};
+
+// per‐frame normalized positions for IO thread
+struct FrameData {
+    vector<Vec> normalized_positions;
+};
+
+// shared queue for frames
 static std::mutex              queue_mutex;
 static std::condition_variable queue_cv;
-static std::deque<vector<Vec>> render_queue;
+static std::deque<FrameData>   render_queue;
 static bool                    physics_done = false;
 
 int main(int argc, char** argv) {
@@ -35,61 +61,64 @@ int main(int argc, char** argv) {
                   << " <scenario> [num_threads]\n";
         return 1;
     }
+    // read scenario & thread count
     string configName = argv[1];
-    int T = (argc == 3 ? std::stoi(argv[2])
-                       : std::thread::hardware_concurrency());
+    int T = (argc == 3
+             ? std::stoi(argv[2])
+             : std::thread::hardware_concurrency());
     if (T < 1) T = 1;
 
-    InitializeMagick(*argv);
+    // load config
     Config cfg(configName);
 
-    // Build timestamped GIF filename
+    // init Magick++
+    Magick::InitializeMagick(*argv);
+
+    // build timestamped GIF filename
     auto now = std::chrono::system_clock::now();
     std::time_t ti = std::chrono::system_clock::to_time_t(now);
     std::tm* tm = std::localtime(&ti);
     std::ostringstream fn;
-    fn << "gif_par_" << configName << "_"
-       << std::put_time(tm, "%Y%m%d_%H%M%S")
-       << ".gif";
+    fn << "gif_parallel_" << configName << "_"
+       << std::put_time(tm, "%Y%m%d_%H%M%S") << ".gif";
     string gif_filename = fn.str();
 
-    // Feedback
+    // feedback
     std::cout << "Scenario:       " << configName << "\n"
               << "Threads:        " << T << "\n"
               << "Steps:          " << cfg.steps
-              << ", Timestep: " << cfg.timestep << " s\n\n";
+              << ", Timestep:    " << cfg.timestep << " s\n"
+              << "DistanceScale:  " << cfg.distanceScale << "\n"
+              << "Output GIF:     " << gif_filename << "\n\n";
 
-    // 1) Define bodies
+    // 1) define bodies
     vector<Body> bodies;
     if (configName == "benchmark_fixed") {
-        // 500 bodies on a 20×25 grid in ±1e9 m
-        const int NX = 20, NY = 25;
+        const int NX = 25, NY = 25;
         const double span = 2e9;
         const double dx = span/(NX-1), dy = span/(NY-1);
         bodies.reserve(NX*NY);
-        for (int ix = 0; ix < NX; ++ix) {
-            for (int iy = 0; iy < NY; ++iy) {
+        for (int ix = 0; ix < NX; ++ix)
+            for (int iy = 0; iy < NY; ++iy)
                 bodies.emplace_back(
                   1e25,
                   Vec{-1e9 + ix*dx, -1e9 + iy*dy},
                   Vec{0,0}
                 );
-            }
-        }
     }
     else if (configName == "earth_moon") {
         bodies = {
-            {5.972e24, {0,0},     {0,0}},
+            {5.972e24, {0,0},        {0,0}},
             {7.34767309e22, {3.84e8,0}, {0,1022}}
         };
     }
     else if (configName == "jupiter_moons") {
         bodies = {
             {1.898e27, {0,0},       {0,0}},
-            {8.93e22, {4.22e8,0},    {0,17320}},
-            {4.8e22,  {6.71e8,0},    {0,13740}},
-            {1.48e23, {1.07e9,0},    {0,10870}},
-            {1.08e23, {1.88e9,0},    {0,8200}}
+            {8.93e22,  {4.22e8,0},  {0,17320}},
+            {4.8e22,   {6.71e8,0},  {0,13740}},
+            {1.48e23,  {1.07e9,0},  {0,10870}},
+            {1.08e23,  {1.88e9,0},  {0,8200}}
         };
     }
     else if (configName == "solar_system") {
@@ -105,10 +134,10 @@ int main(int argc, char** argv) {
     else if (configName == "milky_way") {
         std::mt19937_64 rng(123);
         std::uniform_real_distribution<double> rD(0,5e20),
-                                              aD(0,2*M_PI),
+                                              aD(0,2*PI),
                                               mD(1e30,1e32);
-        for (int i = 0; i < 100; ++i) {
-            double r = rD(rng), th = aD(rng);
+        for (int i=0; i<100; ++i) {
+            double r  = rD(rng), th = aD(rng);
             bodies.emplace_back(
               mD(rng),
               Vec{r*std::cos(th), r*std::sin(th)},
@@ -121,7 +150,7 @@ int main(int argc, char** argv) {
         std::uniform_real_distribution<double> pD(-1e10,1e10),
                                               vD(-1e4,1e4),
                                               mD(1e20,1e25);
-        for (int i = 0; i < 50; ++i) {
+        for (int i=0; i<50; ++i) {
             bodies.emplace_back(
               mD(rng),
               Vec{pD(rng),pD(rng)},
@@ -140,131 +169,139 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    int N     = bodies.size();
+    int chunk = (N + T - 1) / T;
 
-    
-    int N = bodies.size();
-
-    // Per-thread force buffers
+    // per-thread force buffers
     vector<vector<Vec>> forces_thread(T, vector<Vec>(N, {0,0}));
-    vector<string> colors = {
-      "red","blue","green","orange","purple",
-      "cyan","magenta","yellow","brown","pink"
-    };
 
-    // IO thread: draws frames
-    std::thread io_thread([&]() {
-        std::cout<<"[IO] Thread started\n";
-        vector<Image> gif_frames;
-        gif_frames.reserve(cfg.steps+1);
+    // three barriers: after compute, after reduce, after update
+    Barrier b_compute(T), b_reduce(T), b_update(T);
+
+    // — IO thread (consumer) —
+    std::thread io_thread([&](){
+        std::cout << "[IO] thread started\n";
+        vector<Magick::Image> frames;
+        frames.reserve(cfg.steps + 1);
         while (true) {
             std::unique_lock<std::mutex> lk(queue_mutex);
-            queue_cv.wait(lk, [&]{ return !render_queue.empty()||physics_done; });
+            queue_cv.wait(lk, [&]{
+                return !render_queue.empty() || physics_done;
+            });
             if (!render_queue.empty()) {
-                auto F = std::move(render_queue.front());
+                FrameData F = std::move(render_queue.front());
                 render_queue.pop_front();
                 lk.unlock();
 
-                // draw
-                Image img(Geometry(cfg.width,cfg.height),"white");
-                img.strokeColor("black"); img.strokeWidth(1);
-                for (int i=0; i<N; ++i) {
-                    double nx = F[i].x, ny = F[i].y;
-                    int px = int(nx*(cfg.width-1));
-                    int py = cfg.height-1 - int(ny*(cfg.height-1));
-                    img.fillColor(colors[i%colors.size()]);
-                    img.draw(DrawableCircle(px,py,px+5,py));
+                // draw frame
+                Magick::Image img(
+                  Magick::Geometry(cfg.width, cfg.height),
+                  "white"
+                );
+                img.strokeColor("black");
+                img.strokeWidth(1);
+                for (int i = 0; i < N; ++i) {
+                    int px = int(F.normalized_positions[i].x * (cfg.width-1));
+                    int py = cfg.height-1 
+                           - int(F.normalized_positions[i].y * (cfg.height-1));
+                    img.fillColor("red");
+                    img.draw(Magick::DrawableCircle(px,py, px+5,py));
                 }
                 img.fillColor("black");
                 std::ostringstream ss;
-                ss<<"t="<<std::fixed<<std::setprecision(1)
-                  <<(gif_frames.size()*cfg.timestep)<<"s";
-                img.annotate(ss.str(), NorthWestGravity);
+                ss << "t=" << std::fixed << std::setprecision(1)
+                   << (frames.size() * cfg.timestep) << "s";
+                img.annotate(ss.str(), Magick::NorthWestGravity);
                 img.animationDelay(10);
                 img.animationIterations(0);
-                gif_frames.push_back(std::move(img));
+
+                frames.push_back(std::move(img));
                 continue;
             }
-            if (physics_done) break;
+            if (physics_done && render_queue.empty()) {
+                break;
+            }
         }
-        std::cout<<"[IO] Writing "<<gif_filename<<"\n";
-        writeImages(gif_frames.begin(), gif_frames.end(), gif_filename);
-        std::cout<<"[IO] Done\n";
+        std::cout << "[IO] writing GIF...\n";
+        Magick::writeImages(frames.begin(), frames.end(), gif_filename);
+        std::cout << "[IO] GIF done\n";
     });
 
-    // Physics + produce frames
-    std::cout<<"[Physics] Starting integration...\n";
-    for (int step=0; step<cfg.steps; ++step) {
-        if (step % std::max(1, cfg.steps/10) == 0)
-            std::cout<<"[Physics] step "<<step<<"/"<<cfg.steps<<"\n";
+    // — Physics worker threads —
+    auto worker = [&](int tid){
+        int start = tid * chunk;
+        int end   = std::min(start + chunk, N);
+        for (int step = 0; step < cfg.steps; ++step) {
+            // zero local buffer
+            for (int i = start; i < end; ++i)
+                forces_thread[tid][i] = {0,0};
 
-        // zero
-        for (auto &buf : forces_thread)
-            std::fill(buf.begin(), buf.end(), Vec{0,0});
-
-        // compute in parallel
-        auto compute_seg = [&](int t,int s,int e){
-            for (int i=s;i<e;++i)
-                for (int j=i+1;j<N;++j){
-                    double dx=bodies[j].pos.x-bodies[i].pos.x;
-                    double dy=bodies[j].pos.y-bodies[i].pos.y;
-                    double d2=dx*dx+dy*dy+1e-12;
-                    double inv=1.0/std::sqrt(d2);
-                    double F=G_CONST*bodies[i].m*bodies[j].m*inv*inv;
-                    double fx=F*dx*inv, fy=F*dy*inv;
-                    forces_thread[t][i].x += fx;
-                    forces_thread[t][i].y += fy;
-                    forces_thread[t][j].x -= fx;
-                    forces_thread[t][j].y -= fy;
+            // compute forces
+            for (int i = start; i < end; ++i) {
+                for (int j = i+1; j < N; ++j) {
+                    double dx = bodies[j].pos.x - bodies[i].pos.x;
+                    double dy = bodies[j].pos.y - bodies[i].pos.y;
+                    double d2 = dx*dx + dy*dy + 1e-12;
+                    double inv = 1.0/std::sqrt(d2);
+                    double F   = G_CONST*bodies[i].m*bodies[j].m*inv*inv;
+                    double fx  = F*dx*inv;
+                    double fy  = F*dy*inv;
+                    forces_thread[tid][i].x += fx;
+                    forces_thread[tid][i].y += fy;
+                    forces_thread[tid][j].x -= fx;
+                    forces_thread[tid][j].y -= fy;
                 }
-        };
-        vector<std::thread> workers;
-        int chunk = (N+T-1)/T;
-        for (int t=0;t<T;++t) {
-            int s=t*chunk, e=std::min(s+chunk,N);
-            if (s<e) workers.emplace_back(compute_seg,t,s,e);
-        }
-        for (auto &th: workers) if (th.joinable()) th.join();
-
-        // reduce
-        for (int i=0;i<N;++i) {
-            bodies[i].force = {0,0};
-            for (int t=0;t<T;++t) {
-                bodies[i].force.x += forces_thread[t][i].x;
-                bodies[i].force.y += forces_thread[t][i].y;
             }
-        }
+            b_compute.wait();
 
-        // update
-        auto update_seg = [&](int s,int e){
-            for (int i=s;i<e;++i) {
-                bodies[i].vel.x += (bodies[i].force.x/bodies[i].m)*cfg.timestep;
-                bodies[i].vel.y += (bodies[i].force.y/bodies[i].m)*cfg.timestep;
-                bodies[i].pos.x += bodies[i].vel.x*cfg.timestep;
-                bodies[i].pos.y += bodies[i].vel.y*cfg.timestep;
+            // reduction by thread 0
+            if (tid == 0) {
+                for (int i = 0; i < N; ++i) {
+                    bodies[i].force = {0,0};
+                    for (int t = 0; t < T; ++t) {
+                        bodies[i].force.x += forces_thread[t][i].x;
+                        bodies[i].force.y += forces_thread[t][i].y;
+                    }
+                }
             }
-        };
-        workers.clear();
-        for (int t=0;t<T;++t) {
-            int s=t*chunk, e=std::min(s+chunk,N);
-            if (s<e) workers.emplace_back(update_seg,s,e);
-        }
-        for (auto &th: workers) if (th.joinable()) th.join();
+            b_reduce.wait();
 
-        // enqueue normalized positions
-        vector<Vec> norm(N);
-        for (int i=0;i<N;++i) {
-            double nx = bodies[i].pos.x*cfg.distanceScale + 0.5;
-            double ny = bodies[i].pos.y*cfg.distanceScale + 0.5;
-            norm[i] = Vec{nx,ny};
-        }
-        {
-            std::lock_guard<std::mutex> lk(queue_mutex);
-            render_queue.push_back(std::move(norm));
-        }
-        queue_cv.notify_one();
-    }
+            // update positions
+            for (int i = start; i < end; ++i) {
+                bodies[i].vel.x += (bodies[i].force.x / bodies[i].m) * cfg.timestep;
+                bodies[i].vel.y += (bodies[i].force.y / bodies[i].m) * cfg.timestep;
+                bodies[i].pos.x += bodies[i].vel.x * cfg.timestep;
+                bodies[i].pos.y += bodies[i].vel.y * cfg.timestep;
+            }
+            b_update.wait();
 
-    std::cout<<"[Physics] Integration done\n";
+            // push frame data
+            FrameData F;
+            F.normalized_positions.resize(N);
+            for (int i = 0; i < N; ++i) {
+                F.normalized_positions[i].x 
+                  = bodies[i].pos.x * cfg.distanceScale + 0.5;
+                F.normalized_positions[i].y 
+                  = bodies[i].pos.y * cfg.distanceScale + 0.5;
+            }
+            {
+                std::lock_guard<std::mutex> lk(queue_mutex);
+                render_queue.push_back(std::move(F));
+            }
+            queue_cv.notify_one();
+        }
+    };
+
+    // launch physics threads
+    vector<std::thread> phys;
+    phys.reserve(T);
+    for (int t = 0; t < T; ++t)
+        phys.emplace_back(worker, t);
+
+    // join physics
+    for (auto &th : phys) th.join();
+
+    // signal IO & finish
     {
         std::lock_guard<std::mutex> lk(queue_mutex);
         physics_done = true;
@@ -272,6 +309,6 @@ int main(int argc, char** argv) {
     queue_cv.notify_one();
     io_thread.join();
 
-    std::cout<<"Wrote "<<gif_filename<<"\n";
+    std::cout << "Done. GIF: " << gif_filename << "\n";
     return 0;
 }
